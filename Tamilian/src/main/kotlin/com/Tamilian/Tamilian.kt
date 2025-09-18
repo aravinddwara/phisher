@@ -1,19 +1,12 @@
 package com.Tamilian
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.metaproviders.TmdbLink
 import com.lagradost.cloudstream3.metaproviders.TmdbProvider
 import com.lagradost.cloudstream3.mvvm.safeApiCall
-import com.lagradost.cloudstream3.utils.AppUtils
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack
-import com.lagradost.cloudstream3.utils.newExtractorLink
-
+import com.lagradost.cloudstream3.utils.*
+import org.jsoup.nodes.Element
 
 class Tamilian : TmdbProvider() {
     override var name = "Tamilian"
@@ -26,9 +19,59 @@ class Tamilian : TmdbProvider() {
         TvType.Movie,
     )
 
-    companion object
-    {
-        const val HOST="https://embedojo.net"
+    companion object {
+        const val HOST = "https://embedojo.net"
+        const val TMDB_API_KEY = "a7a980562c931a2722d2b91253819cbe" // You'll need to get this from TMDB
+        const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
+    }
+
+    override val mainPage = mainPageOf(
+        "$TMDB_BASE_URL/discover/movie?api_key=$TMDB_API_KEY&with_original_language=ta&sort_by=popularity.desc&page=" to "Popular Tamil Movies",
+        "$TMDB_BASE_URL/movie/now_playing?api_key=$TMDB_API_KEY&language=ta&region=IN&page=" to "Now Playing",
+        "$TMDB_BASE_URL/discover/movie?api_key=$TMDB_API_KEY&with_original_language=ta&sort_by=release_date.desc&page=" to "Latest Tamil Movies",
+        "$TMDB_BASE_URL/discover/movie?api_key=$TMDB_API_KEY&with_original_language=ta&vote_average.gte=7&sort_by=vote_average.desc&page=" to "Top Rated Tamil Movies",
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = request.data + page
+        val response = app.get(url).parsed<TmdbResponse>()
+        
+        val movies = response.results?.mapNotNull { movie ->
+            movie.toSearchResponse()
+        } ?: emptyList()
+
+        return newHomePageResponse(request.name, movies, hasNext = page < (response.totalPages ?: 1))
+    }
+
+    private fun TmdbMovie.toSearchResponse(): MovieSearchResponse? {
+        return newMovieSearchResponse(
+            name = this.title ?: this.originalTitle ?: return null,
+            url = TmdbLink(
+                tmdbID = this.id,
+                imdbID = null,
+                movieName = this.title,
+                year = this.releaseDate?.substringBefore("-")?.toIntOrNull()
+            ).toString(),
+            type = TvType.Movie,
+        ) {
+            this.posterUrl = if (this@toSearchResponse.posterPath != null) {
+                "https://image.tmdb.org/t/p/w500${this@toSearchResponse.posterPath}"
+            } else null
+            this.year = this@toSearchResponse.releaseDate?.substringBefore("-")?.toIntOrNull()
+            this.quality = SearchQuality.HD
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val searchUrl = "$TMDB_BASE_URL/search/movie?api_key=$TMDB_API_KEY&query=${query}&language=ta"
+        val response = app.get(searchUrl).parsed<TmdbResponse>()
+        
+        return response.results?.mapNotNull { movie ->
+            // Filter for Tamil movies only
+            if (movie.originalLanguage == "ta") {
+                movie.toSearchResponse()
+            } else null
+        } ?: emptyList()
     }
 
     override suspend fun loadLinks(
@@ -45,7 +88,8 @@ class Tamilian : TmdbProvider() {
         val token = script?.substringAfter("FirePlayer(\"")?.substringBefore("\",")
         val m3u8 = app.post("$HOST/player/index.php?data=$token&do=getVideo", headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
             .parsedSafe<VideoData>()
-        val headers= mapOf("Origin" to "https://embedojo.net")
+        val headers = mapOf("Origin" to "https://embedojo.net")
+        
         m3u8?.let {
             safeApiCall {
                 callback.invoke(
@@ -65,7 +109,6 @@ class Tamilian : TmdbProvider() {
         return true
     }
 
-
     private fun TmdbLink.toLinkData(): LinkData {
         return LinkData(
             imdbId = imdbID,
@@ -76,6 +119,29 @@ class Tamilian : TmdbProvider() {
         )
     }
 
+    // TMDB API Response Models
+    data class TmdbResponse(
+        @JsonProperty("page") val page: Int?,
+        @JsonProperty("results") val results: List<TmdbMovie>?,
+        @JsonProperty("total_pages") val totalPages: Int?,
+        @JsonProperty("total_results") val totalResults: Int?
+    )
+
+    data class TmdbMovie(
+        @JsonProperty("id") val id: Int?,
+        @JsonProperty("title") val title: String?,
+        @JsonProperty("original_title") val originalTitle: String?,
+        @JsonProperty("original_language") val originalLanguage: String?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("poster_path") val posterPath: String?,
+        @JsonProperty("backdrop_path") val backdropPath: String?,
+        @JsonProperty("release_date") val releaseDate: String?,
+        @JsonProperty("vote_average") val voteAverage: Double?,
+        @JsonProperty("vote_count") val voteCount: Int?,
+        @JsonProperty("popularity") val popularity: Double?,
+        @JsonProperty("adult") val adult: Boolean?,
+        @JsonProperty("genre_ids") val genreIds: List<Int>?
+    )
 
     data class LinkData(
         @JsonProperty("simklId") val simklId: Int? = null,
@@ -103,7 +169,6 @@ class Tamilian : TmdbProvider() {
         @JsonProperty("isCartoon") val isCartoon: Boolean = false,
     )
 
-
     data class VideoData(
         val hls: Boolean,
         val videoImage: String,
@@ -113,5 +178,4 @@ class Tamilian : TmdbProvider() {
         val attachmentLinks: List<Any?>,
         val ck: String,
     )
-
 }
