@@ -12,7 +12,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.nodes.Element
 
 class MassTamilanProvider : MainAPI() { // all providers must be an instance of MainAPI
-    override var mainUrl = "https://masstamilan.dev"
+    override var mainUrl = "https://masustamilan.dev"
     override var name = "MassTamilan"
     override val hasMainPage = true
     override var lang = "ta"
